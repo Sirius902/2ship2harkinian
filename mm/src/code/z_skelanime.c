@@ -3,6 +3,8 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "2s2h/GameInteractor/GameInteractor.h"
+
 #define ANIM_INTERP 1
 
 s32 PlayerAnimation_Loop(PlayState* play, SkelAnime* skelAnime);
@@ -1018,28 +1020,31 @@ void AnimationContext_SetLoadFrame(PlayState* play, PlayerAnimationHeader* anima
     AnimationEntry* entry = AnimationContext_AddEntry(&play->animationCtx, ANIMATION_LINKANIMETION);
 
     if (entry != NULL) {
-        if (ResourceMgr_OTRSigCheck(animation) != 0)
-            animation = ResourceMgr_LoadAnimByName(animation);
+        if (GameInteractor_Should(VB_LOAD_PLAYER_ANIMATION_FRAME, true, animation, frame, limbCount, frameTable)) {
+            if (ResourceMgr_OTRSigCheck(animation) != 0)
+                animation = ResourceMgr_LoadAnimByName(animation);
 
-        PlayerAnimationHeader* playerAnimHeader = Lib_SegmentedToVirtual(animation);
-        Vec3s* ram = frameTable;
+            PlayerAnimationHeader* playerAnimHeader = Lib_SegmentedToVirtual(animation);
+            Vec3s* ram = frameTable;
 
-        // osCreateMesgQueue(&entry->data.load.msgQueue, &entry->data.load.msg, 1);
-        //
-        // char animPath[2048];
-        //
-        // snprintf(animPath, sizeof(animPath), "misc/link_animetion/gPlayerAnimData_%06X",
-        //         (((uintptr_t)linkAnimHeader->segmentVoid - 0x07000000)));
-        //
-        // printf("Streaming %s, seg = %08X\n", animPath, linkAnimHeader->segment);
+            // osCreateMesgQueue(&entry->data.load.msgQueue, &entry->data.load.msg, 1);
+            //
+            // char animPath[2048];
+            //
+            // snprintf(animPath, sizeof(animPath), "misc/link_animetion/gPlayerAnimData_%06X",
+            //         (((uintptr_t)linkAnimHeader->segmentVoid - 0x07000000)));
+            //
+            // printf("Streaming %s, seg = %08X\n", animPath, linkAnimHeader->segment);
 
-        s16* animData = /* ResourceMgr_LoadPlayerAnimByName*/ (animation->segmentVoid);
-        // 2S2H [Port] sometimes a HESS can set a negative frame value from a negative playback speed. When converted to
-        // a signed value this will cause a crash due to copying way much data.
-        if (frame < 0) {
-            frame = 0;
+            s16* animData = /* ResourceMgr_LoadPlayerAnimByName*/ (animation->segmentVoid);
+            // 2S2H [Port] sometimes a HESS can set a negative frame value from a negative playback speed. When
+            // converted to a signed value this will cause a crash due to copying way much data.
+            if (frame < 0) {
+                frame = 0;
+            }
+            memcpy(ram, (uintptr_t)animData + (((sizeof(Vec3s) * limbCount + 2) * frame)),
+                   sizeof(Vec3s) * limbCount + 2);
         }
-        memcpy(ram, (uintptr_t)animData + (((sizeof(Vec3s) * limbCount + 2) * frame)), sizeof(Vec3s) * limbCount + 2);
     }
 }
 

@@ -158,7 +158,8 @@ nlohmann::json curatedPresetJ = R"(
                 "OoTFasterSwim": 1,
                 "PowerCrouchStab": 1,
                 "SideRoll": 1,
-                "TatlISG": 1
+                "TatlISG": 1,
+                "N64Weirdshots": 1
             },
             "Saving": {
                 "Autosave": 1,

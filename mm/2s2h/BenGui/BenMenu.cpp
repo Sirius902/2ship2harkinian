@@ -1274,6 +1274,9 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip("Restores the appearance of Woodfall mountain to not look poisoned "
                                            "when viewed from Termina Field after clearing Woodfall Temple\n\n"
                                            "Requires a scene reload to take effect"));
+    AddWidget(path, "N64 Weirdshots", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Restorations.N64Weirdshots")
+        .Options(CheckboxOptions().Tooltip("Restores original N64 weirdshot frames."));
     AddWidget(path, "Simulated Input Lag", WIDGET_CVAR_SLIDER_INT)
         .CVar(CVAR_SIMULATED_INPUT_LAG)
         .Options(IntSliderOptions()
