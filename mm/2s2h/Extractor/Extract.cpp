@@ -6,7 +6,11 @@
 #endif
 #include "Extract.h"
 #include "portable-file-dialogs.h"
+#include "ResourceType.h"
 #include <utils/binarytools/BitConverter.h>
+#include <utils/binarytools/BinaryReader.h>
+#include <utils/binarytools/BinaryWriter.h>
+#include <utils/binarytools/MemoryStream.h>
 #include "build.h"
 
 #ifdef unix
@@ -42,12 +46,17 @@
 
 #include <SDL2/SDL_messagebox.h>
 
+#include <tinyxml2.h>
+#include <spdlog/spdlog.h>
+#include <zip.h>
+
 #include <array>
 #include <fstream>
 #include <filesystem>
 #include <unordered_map>
 #include <random>
 #include <string>
+#include <string_view>
 
 extern "C" uint32_t CRC32C(unsigned char* data, size_t dataSize);
 
@@ -524,6 +533,102 @@ std::string Extractor::Mkdtemp() {
     return tmppath;
 }
 
+static void AddWeirdshotAnimation(std::string_view otrFile, std::string_view romPath, std::string_view xmlPath) {
+    // Animation after `gPlayerAnim_link_bow_side_walk_Data` in the ROM.
+    std::string_view animationName = "gPlayerAnim_alink_ozigi_Data";
+
+    const auto linkAnimetionXmlPath = std::filesystem::path(xmlPath) / "misc/link_animetion.xml";
+    
+    const auto linkAnimetionXmlSize = std::filesystem::file_size(linkAnimetionXmlPath);
+    std::string linkAnimetionXml(linkAnimetionXmlSize, '\0');
+    auto linkAnimetionXmlFile = std::ifstream(linkAnimetionXmlPath, std::ios::in | std::ios::binary);
+    linkAnimetionXmlFile.read(&linkAnimetionXml[0], linkAnimetionXmlSize);
+
+    auto xmlReader = std::make_shared<tinyxml2::XMLDocument>();
+
+    xmlReader->Parse(linkAnimetionXml.c_str());
+    if (xmlReader->Error()) {
+        SPDLOG_ERROR("Failed to parse XML file {}. Error: {}", otrFile, xmlReader->ErrorStr());
+        return;
+    }
+
+    auto animation = xmlReader->GetDocument()->FirstChildElement()->FirstChildElement()->FirstChildElement();
+    while (animation->Attribute("Name") != animationName) {
+        animation = animation->NextSiblingElement();
+    }
+    
+    const auto offset = animation->UnsignedAttribute("Offset");
+
+    // This may need to be increased later if it's possible to index farther with certain weirdshots.
+    constexpr auto frameCount = 104;
+    
+    auto archive = zip_open(otrFile.data(), ZIP_CREATE, nullptr);
+    if (archive == nullptr) {
+        SPDLOG_ERROR("Failed to load zip file \"{}\"", otrFile);
+        return;
+    }
+    
+    auto romFile = std::ifstream(romPath.data(), std::ios::in | std::ios::binary);
+
+    std::vector<std::int16_t> weirdshotAnimation;
+    weirdshotAnimation.resize(((6 * 22 + 2) * frameCount) / sizeof(std::int16_t));
+    romFile.read(reinterpret_cast<char*>(weirdshotAnimation.data()), weirdshotAnimation.size() * sizeof(std::int16_t));
+    
+    for (std::size_t i = 0; i < weirdshotAnimation.size(); i++) {
+        weirdshotAnimation[i] = BitConverter::ToInt16BE(reinterpret_cast<std::uint8_t*>(weirdshotAnimation.data()), i * sizeof(std::int16_t));
+    }
+
+    auto weirdshotAnimationFile = std::make_shared<std::vector<char>>();
+    weirdshotAnimationFile->resize(0x40);
+
+    {
+        auto stream = std::make_shared<Ship::MemoryStream>(weirdshotAnimationFile);
+        auto writer = std::make_shared<Ship::BinaryWriter>(stream);
+        
+        writer->Write((uint8_t)Endianness::Little); // 0x00
+        writer->Write((uint8_t)0); // 0x01
+        writer->Write((uint8_t)0); // 0x02
+        writer->Write((uint8_t)0); // 0x03
+
+        writer->Write(static_cast<uint32_t>(Ship::ResourceType::Blob)); // 0x04
+        writer->Write((uint32_t)0); // 0x08
+        writer->Write((uint64_t)0xDEADBEEFDEADBEEF); // id, 0x0C
+        writer->Write((uint32_t)0); // 0x10
+        writer->Write((uint64_t)0); // ROM CRC, 0x14
+        writer->Write((uint32_t)0); // ROM Enum, 0x1C
+        
+        while (writer->GetBaseAddress() < 0x40) {
+            writer->Write((uint32_t)0); // To be used at a later date!
+        }
+        
+        writer->Write((uint32_t)(weirdshotAnimation.size() * sizeof(std::int16_t)));
+    }
+
+    const auto dataStart = weirdshotAnimationFile->size();
+    weirdshotAnimationFile->resize(dataStart + weirdshotAnimation.size() * sizeof(std::int16_t));
+    std::memcpy(weirdshotAnimationFile->data() + dataStart, weirdshotAnimation.data(), weirdshotAnimation.size() * sizeof(std::int16_t));
+
+    const auto source = zip_source_buffer(archive, weirdshotAnimationFile->data(), weirdshotAnimationFile->size(), 0);
+
+    if (source == nullptr) {
+        zip_error_t* zipError = zip_get_error(archive);
+        SPDLOG_ERROR("Failed to create ZIP source. Error: {}", zip_error_strerror(zipError));
+        zip_source_free(source);
+        zip_error_fini(zipError);
+        return;
+    }
+
+    if (zip_file_add(archive, "misc/weirdshot/gAnimation", source, ZIP_FL_OVERWRITE | ZIP_FL_ENC_UTF_8) < 0) {
+        zip_error_t* zipError = zip_get_error(archive);
+        SPDLOG_ERROR("Failed to add file to ZIP. Error: {}", zip_error_strerror(zipError));
+        zip_source_free(source);
+        zip_error_fini(zipError);
+        return;
+    }
+
+    zip_close(archive);
+}
+
 extern "C" int zapd_main(int argc, char** argv);
 
 bool Extractor::CallZapd(std::string installPath, std::string exportdir) {
@@ -590,6 +695,8 @@ bool Extractor::CallZapd(std::string installPath, std::string exportdir) {
 #endif
 
     zapd_main(argc, (char**)argv.data());
+
+    AddWeirdshotAnimation(otrFile, romPath, xmlPath);
 
 #ifdef _WIN32
     // Hide the command window again.
